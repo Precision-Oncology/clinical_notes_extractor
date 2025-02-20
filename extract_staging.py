@@ -6,7 +6,7 @@ note_id: a unique identifier for the note
 stage: the earliest staging text found (e.g., "Stage II", "T2N0M0")
 date: the associated date (in YYYY-MM-DD) if present in close proximity; otherwise null
 Usage:
-python extract_staging.py [--input_dir <dir>] [--output_dir <dir>] [--use_llm] [--llm_model <model_name>]
+python extract_staging.py [--input_dir <dir>] [--output_dir <dir>] [--use_llm] [--model_path <model_path>]
 Requirements:
 • Python 3
 • Standard library modules (re, json, argparse)
@@ -30,12 +30,8 @@ from typing import Any
 import pandas as pd
 import pyarrow.parquet as pq
 import os
-
-# Try to import transformers pipeline if available
-try:
-    from transformers import pipeline
-except ImportError:
-    pipeline = None
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 def extract_stage_and_date(text: str) -> tuple[str | None, str | None]:
     """
@@ -105,12 +101,11 @@ def extract_stage_and_date(text: str) -> tuple[str | None, str | None]:
 
     return stage_str, date_str
 
-def extract_stage_and_date_llm(text, note_id, llm_pipeline):
+def extract_stage_and_date_llm(text, note_id, model, tokenizer):
     """
-    Uses an LLM to extract the first mention of cancer staging information and its date from the text.
+    Uses a local LLM to extract staging information and date from text.
     Returns:
     tuple: (stage_string or None, date_string or None)
-    The LLM is prompted to return a JSON object with 'note_id', 'stage', and 'date'.
     """
     prompt = (
         f"Extract the first mention of cancer staging information and its associated date from the following clinical note. "
@@ -120,8 +115,17 @@ def extract_stage_and_date_llm(text, note_id, llm_pipeline):
         f"Only return the first staging reference encountered in the text.\n\n"
         f"Clinical note text:\n'''\n{text}\n'''"
     )
-    result = llm_pipeline(prompt, max_length=256, truncation=True)
-    response_text = result[0]['generated_text']
+    
+    inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=512)
+    with torch.no_grad():
+        outputs = model.generate(
+            inputs["input_ids"],
+            max_length=256,
+            pad_token_id=tokenizer.eos_token_id,
+            num_return_sequences=1
+        )
+    response_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    
     try:
         json_start = response_text.find('{')
         json_end = response_text.rfind('}')
@@ -132,24 +136,27 @@ def extract_stage_and_date_llm(text, note_id, llm_pipeline):
         date = json_obj.get('date')
         return stage, date
     except Exception as e:
+        print(f"Error parsing LLM response: {e}", file=sys.stderr)
         return None, None
 
 def process_note(
     note: dict,
     use_llm: bool = False,
-    llm_pipeline_instance: Any | None = None
+    model: Any | None = None,
+    tokenizer: Any | None = None
 ) -> dict[str, str | None]:
     """
     Processes a single clinical note.
     Arguments:
     note (dict): must include 'note_id' and 'text'
     use_llm (bool): whether to use LLM-based extraction
-    llm_pipeline_instance: the initialized LLM pipeline (required if use_llm is True)
+    model: the initialized LLM model (required if use_llm is True)
+    tokenizer: the initialized LLM tokenizer (required if use_llm is True)
     Returns:
     dict: { "note_id": <id>, "stage": <extracted stage string or None>, "date": <extracted date or None> }
     """
-    if use_llm and llm_pipeline_instance is not None:
-        stage, date = extract_stage_and_date_llm(note['text'], note['note_id'], llm_pipeline_instance)
+    if use_llm and model is not None and tokenizer is not None:
+        stage, date = extract_stage_and_date_llm(note['text'], note['note_id'], model, tokenizer)
     else:
         stage, date = extract_stage_and_date(note['text'])
     
@@ -183,15 +190,24 @@ def main():
     parser.add_argument('--output_dir', type=str,
                        help='Output directory for processed Parquet files')
     parser.add_argument('--use_llm', action='store_true', help='Use LLM-based extraction instead of regex.')
-    parser.add_argument('--llm_model', type=str, default="gpt-4o", help='LLM model name to use if --use_llm is set.')
+    parser.add_argument('--model_path', type=str, default="/wynton/protected/home/zack/brtan/models/",
+                       help='Path to local model directory') # TODO: ADD LOCAL MODEL PATH
     args = parser.parse_args()
-    use_llm = args.use_llm
-    llm_pipeline_instance = None
-    if use_llm:
-        if pipeline is None:
-            print("Transformers library is not installed. Please install it (pip install transformers) to use LLM extraction.")
+
+    model = None
+    tokenizer = None
+    if args.use_llm:
+        print("Loading local model and tokenizer...")
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(args.model_path)
+            model = AutoModelForCausalLM.from_pretrained(args.model_path)
+            if torch.cuda.is_available():
+                model = model.cuda()
+            model.eval()
+        except Exception as e:
+            print(f"Error loading model: {e}", file=sys.stderr)
             return
-        llm_pipeline_instance = pipeline("text2text-generation", model=args.llm_model)
+
     if args.input_dir:
         notes = load_notes_from_parquet(args.input_dir)
     else:
@@ -221,7 +237,7 @@ def main():
         ]
     results = []
     for note in notes:
-        result = process_note(note, use_llm=use_llm, llm_pipeline_instance=llm_pipeline_instance)
+        result = process_note(note, use_llm=args.use_llm, model=model, tokenizer=tokenizer)
         results.append(result)
     if args.output_dir:
         for res in results:
