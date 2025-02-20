@@ -40,11 +40,13 @@ python extract_staging.py \
 ```
 
 **Input:**
+
 - Directory of note text Parquet files with columns:
   - `deid_note_key` (string)
   - `note_text` (string)
 
 **Output:**
+
 - Directory of Parquet files with columns:
   - `note_id` (deid_note_key)
   - `stage` (extracted staging text or null)
@@ -60,10 +62,12 @@ python map_encounter_dates.py \
 ```
 
 **Input:**
+
 - Note metadata Parquets (columns: deid_note_key, encounterkey)
 - Encounterfact Parquets (columns: encounterkey, datekeyvalue)
 
 **Output:**
+
 - Single Parquet file with:
   - `deid_note_key`
   - `encounterkey`

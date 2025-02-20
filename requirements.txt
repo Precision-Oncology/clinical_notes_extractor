@@ -1,0 +1,15 @@
+# Core dependencies
+python-dateutil>=2.8.2  # Date parsing
+
+# Optional LLM dependencies
+transformers>=4.40.0  # Hugging Face Transformers
+torch>=2.2.2  # PyTorch for transformer models
+accelerate>=0.30.0  # Optimized model loading
+
+# Linting/formatting
+black>=24.4.0
+flake8>=7.0.0
+mypy>=1.10.0
+
+pandas>=1.3.0
+pyarrow>=6.0.0

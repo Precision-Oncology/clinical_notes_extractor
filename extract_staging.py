@@ -6,7 +6,7 @@ note_id: a unique identifier for the note
 stage: the earliest staging text found (e.g., "Stage II", "T2N0M0")
 date: the associated date (in YYYY-MM-DD) if present in close proximity; otherwise null
 Usage:
-python extract_staging.py [--input_file <file>] [--output_file <file>] [--use_llm] [--llm_model <model_name>]
+python extract_staging.py [--input_dir <dir>] [--output_dir <dir>] [--use_llm] [--llm_model <model_name>]
 Requirements:
 • Python 3
 • Standard library modules (re, json, argparse)
@@ -25,6 +25,11 @@ import json
 import argparse
 from datetime import datetime
 from dateutil.parser import parse
+import sys
+from typing import Any
+import pandas as pd
+import pyarrow.parquet as pq
+import os
 
 # Try to import transformers pipeline if available
 try:
@@ -32,7 +37,7 @@ try:
 except ImportError:
     pipeline = None
 
-def extract_stage_and_date(text):
+def extract_stage_and_date(text: str) -> tuple[str | None, str | None]:
     """
     Scans the provided text and extracts:
     The first mention of staging information (either "Stage" followed by I/II/III/IV or a TNM descriptor)
@@ -45,9 +50,15 @@ def extract_stage_and_date(text):
     tnm_pattern = re.compile(r'\bT\d+N\d+M\d+\b', re.IGNORECASE)
     # OMOP CDM compatible date pattern (YYYY-MM-DD with optional time component)
     date_pattern = re.compile(
-        r'\d{4}-\d{2}-\d{2}'  # Basic YYYY-MM-DD
-        r'(?:[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?)?'  # Optional time component
-        r'(?:Z|[+-]\d{2}:?\d{2})?'  # Optional timezone
+        r'\d{4}-'          # Year
+        r'\d{1,2}-'        # Month (1-2 digits)
+        r'\d{1,2}'         # Day (1-2 digits)
+        r'(?:[ T]'         # Date/time separator
+        r'\d{1,2}:'        # Hours
+        r'\d{1,2}:'        # Minutes 
+        r'\d{1,2}'         # Seconds
+        r'(?:\.\d+)?)?'    # Fractional seconds
+        r'(?:Z|[+-]\d{1,2}:?\d{2})?'  # Timezone
     )
 
     # Find all matches (as iterator objects)
@@ -86,8 +97,9 @@ def extract_stage_and_date(text):
             # Parse any recognized date format
             dt = parse(raw_date, fuzzy=True)
             date_str = dt.strftime("%Y-%m-%d")
-        except:
+        except (ValueError, OverflowError, TypeError) as e:
             date_str = None
+            print(f"Date parsing error: {e}", file=sys.stderr)
     else:
         date_str = None
 
@@ -122,7 +134,11 @@ def extract_stage_and_date_llm(text, note_id, llm_pipeline):
     except Exception as e:
         return None, None
 
-def process_note(note, use_llm=False, llm_pipeline_instance=None):
+def process_note(
+    note: dict,
+    use_llm: bool = False,
+    llm_pipeline_instance: Any | None = None
+) -> dict[str, str | None]:
     """
     Processes a single clinical note.
     Arguments:
@@ -144,21 +160,16 @@ def process_note(note, use_llm=False, llm_pipeline_instance=None):
     }
     return result
 
-def load_notes_from_file(input_file):
-    """
-    Load clinical notes from a JSON lines file.
-    Each line should be a JSON object with at least 'note_id' and 'text'.
-    Returns a list of note dictionaries.
-    """
+def load_notes_from_parquet(input_dir):
+    """Load clinical notes from Parquet files"""
     notes = []
-    with open(input_file, 'r') as infile:
-        for line in infile:
-            if line.strip():
-                try:
-                    note = json.loads(line)
-                    notes.append(note)
-                except json.JSONDecodeError:
-                    continue
+    for file in os.listdir(input_dir):
+        if file.endswith(".parquet"):
+            path = os.path.join(input_dir, file)
+            df = pd.read_parquet(path)
+            notes.extend(df[['deid_note_key', 'note_text']]
+                         .rename(columns={'note_text': 'text', 'deid_note_key': 'note_id'})
+                         .to_dict('records'))
     return notes
 
 def main():
@@ -166,9 +177,11 @@ def main():
     Main entry point for processing the clinical notes.
     Run this script directly to see the extraction on sample notes.
     """
-    parser = argparse.ArgumentParser(description='Extract first mention of cancer staging and date from clinical notes.')
-    parser.add_argument('--input_file', type=str, default=None, help='Path to input file containing clinical notes in JSON lines format.')
-    parser.add_argument('--output_file', type=str, default=None, help='Path to output file to write JSON lines results.')
+    parser = argparse.ArgumentParser(description='Extract cancer staging from clinical notes.')
+    parser.add_argument('--input_dir', type=str, 
+                       help='Path to directory containing note_text Parquet files')
+    parser.add_argument('--output_dir', type=str,
+                       help='Output directory for processed Parquet files')
     parser.add_argument('--use_llm', action='store_true', help='Use LLM-based extraction instead of regex.')
     parser.add_argument('--llm_model', type=str, default="gpt-4o", help='LLM model name to use if --use_llm is set.')
     args = parser.parse_args()
@@ -179,8 +192,8 @@ def main():
             print("Transformers library is not installed. Please install it (pip install transformers) to use LLM extraction.")
             return
         llm_pipeline_instance = pipeline("text2text-generation", model=args.llm_model)
-    if args.input_file:
-        notes = load_notes_from_file(args.input_file)
+    if args.input_dir:
+        notes = load_notes_from_parquet(args.input_dir)
     else:
         notes = [
             {
@@ -210,13 +223,15 @@ def main():
     for note in notes:
         result = process_note(note, use_llm=use_llm, llm_pipeline_instance=llm_pipeline_instance)
         results.append(result)
-    if args.output_file:
-        with open(args.output_file, 'w') as outfile:
-            for res in results:
-                outfile.write(json.dumps(res) + "\n")
-        print(f"Results written to {args.output_file}")
+    if args.output_dir:
+        for res in results:
+            output_file = f"{args.output_dir}/{res['date']}.parquet"
+            df = pd.DataFrame([res])
+            pq.write_table(df.to_arrow(), output_file)
+        print(f"Results written to {args.output_dir}")
     else:
         for res in results:
             print(json.dumps(res))
-    if __name__ == "__main__":
-        main()
+
+if __name__ == "__main__":
+    main()
