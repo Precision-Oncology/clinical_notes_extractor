@@ -18,7 +18,15 @@ Note: This tool is designed for internal hospital research systems and only uses
    - Links encounters to dates from encounter facts
    - Creates unified mapping file
 
-## 3. Patient Timeline Creation (`patient_staging_timeline.py`):
+3. **Patient Timeline Creation** (`patient_staging_timeline.py`):
+    - Joins staging data with encounter dates and creates a timeline of patient encounters with staging information
+    - Outputs a parquet file with the following columns:
+        - `patientdurablekey` (unique patient identifier)
+        - `encounters` (list of chronological encounters with keys: 
+            - `encounterkey`
+            - `stage` 
+            - `encounter_date`)
+
 ```bash
 python patient_staging_timeline.py \
   --staging_dir ./staging_results \
@@ -26,14 +34,6 @@ python patient_staging_timeline.py \
   --encounterfact_dir /data/encounterfact \
   --output ./patient_timelines.parquet
 ```
-
-**Output:**
-- Parquet file with columns:
-  - `patientdurablekey` (unique patient identifier)
-  - `encounters` (list of chronological encounters with keys: 
-    - `encounterkey`
-    - `stage` 
-    - `encounter_date`)
 
 ## Requirements
 
