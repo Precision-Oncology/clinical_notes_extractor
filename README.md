@@ -1,7 +1,8 @@
 # Cancer Staging Extraction Pipeline
 
 A system for extracting cancer staging information from clinical notes and linking to encounter dates.
-Note: This is buily as an inhouse tool for hospital research systems and so only uses Local LLMs! At no point do we use a remote LLM.
+
+Note: This tool is designed for internal hospital research systems and only uses locally-hosted LLMs for data privacy and security. No clinical data is ever sent to remote/cloud LLM services.
 
 ## Pipeline Overview
 

@@ -7,8 +7,3 @@ pyarrow>=6.0.0
 torch>=2.2.2  # PyTorch
 transformers>=4.40.0  # Hugging Face Transformers
 accelerate>=0.30.0  # For optimized model loading
-
-# Linting/formatting
-black>=24.4.0
-flake8>=7.0.0
-mypy>=1.10.0
