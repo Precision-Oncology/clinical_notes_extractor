@@ -33,13 +33,25 @@ pip install transformers
 
 ### 1. Extract Staging Information
 
+The extract_staging.py script supports both regex-based extraction (default) and LLM-assisted extraction for complex cases. Use the following instructions based on your needs:
+
+For regex-based extraction:
+```bash
+python extract_staging.py \
+  --input_dir /path/to/note_text_parquets \
+  --output_dir ./staging_results
+```
+
+For LLM-based extraction:
 ```bash
 python extract_staging.py \
   --input_dir /path/to/note_text_parquets \
   --output_dir ./staging_results \
-  [--use_llm] \
-  [--llm_model "gpt-4o"]
+  --use_llm \
+  --model_path /path/to/local/model_directory
 ```
+
+Note: The --model_path argument specifies the directory of the local LLM model. If not provided, the script defaults to a placeholder_path.
 
 **Input:**
 - Directory of note text Parquet files with columns:
