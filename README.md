@@ -17,7 +17,23 @@ Note: This tool is designed for internal hospital research systems and only uses
    - Maps notes to encounters using note metadata
    - Links encounters to dates from encounter facts
    - Creates unified mapping file
-   - To Do: Map encounters to patients!
+
+## 3. Patient Timeline Creation (`patient_staging_timeline.py`):
+```bash
+python patient_staging_timeline.py \
+  --staging_dir ./staging_results \
+  --note_encounter_mapping ./mappings/note_encounter.parquet \
+  --encounterfact_dir /data/encounterfact \
+  --output ./patient_timelines.parquet
+```
+
+**Output:**
+- Parquet file with columns:
+  - `patientdurablekey` (unique patient identifier)
+  - `encounters` (list of chronological encounters with keys: 
+    - `encounterkey`
+    - `stage` 
+    - `encounter_date`)
 
 ## Requirements
 
@@ -114,13 +130,13 @@ final_df = staging_df.merge(
 )
 ```
 
-## Data Model
-
+## Updated Data Model
 ```mermaid
 graph LR
     note_text -->|deid_note_key| note_metadata
     note_metadata -->|encounterkey| encounterfact
-    encounterfact -->|datekeyvalue| encounter_dates
+    encounterfact -->|patientdurablekey| patient_timeline
+    extract_staging -->|staging_data| patient_timeline
 ```
 
 ## Performance Notes
