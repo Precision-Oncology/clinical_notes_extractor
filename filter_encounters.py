@@ -23,3 +23,4 @@ def filter_encounters(patient_ids_path: str, input_dir: str, output_dir: str):
                      ))
     )
     print(f"Filtered encounters saved to {output_path}") 
+    

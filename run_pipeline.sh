@@ -25,4 +25,3 @@ rm -rf /scratch/brtan/filtered_notes
 # Primary Data Directories
 # /wynton/protected/project/ic/data/parquet/DEID_CDW/
 # /wynton/protected/project/ic/data/parquet/DEID_OMOP/
-
