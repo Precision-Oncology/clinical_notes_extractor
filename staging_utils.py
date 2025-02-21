@@ -19,7 +19,7 @@ class StagingExtractor:
         if not self.llm_model:
             self.llm_model = AutoModelForCausalLM.from_pretrained(
                 "deepseek-ai/deepseek-r1-200k-base", 
-                trust_remote_code=True
+                trust_remote_code=False
             )
             self.tokenizer = AutoTokenizer.from_pretrained(
                 "deepseek-ai/deepseek-r1-200k-base"

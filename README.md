@@ -49,7 +49,7 @@ temp/
 │   └── patientdurablekey=*/ 
 │       └── *.parquet
 │
-└── filtered_notes/  # Joined notes + encounters
+└── filtered_notes/  # Joined notes + encounters (Dask-based)
     └── *.parquet
 ```
 
@@ -63,6 +63,17 @@ stage | string | Extracted staging info
 system | string | Staging system (TNM/General)
 confidence | float | Extraction confidence (0-1)
 evidence | string | Relevant text snippet
+
+## Usage Details
+
+1. **Filtering Encounters**  
+   Filters large encounter datasets based on a patient list to produce a reduced set of Parquet files, partitioned by `patientdurablekey`.
+
+2. **Filtering Notes**  
+   Uses Dask (`dask[dataframe]`) to merge note metadata and text with filtered encounters in a memory-efficient way.
+
+3. **Extracting Staging**  
+   Reads the filtered notes and applies the `StagingExtractor`. This can use simple regex rules or an LLM, depending on the `--use_llm` flag.
 
 ## Performance Benchmarks
 
