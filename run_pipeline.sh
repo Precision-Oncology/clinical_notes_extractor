@@ -1,13 +1,13 @@
 #!/bin/bash
 # Step 1: Filter encounters
 python filter_encounters.py \
-  --patient_ids data/input/patient_ids.csv \
+  --patient_ids data/input/patient_ids_with_durablekey.csv \
   --input_dir /wynton/protected/project/ic/data/parquet/DEID_CDW/encounterfact \
-  --output_dir /scratch/brtan/filtered_encounters
+  --output_dir /wynton/protected/home/zack/brtan/Stage_2_Staging_Extractor/data/output/filtered_encounters
 
 # Step 2: Filter notes
 python filter_notes.py \
-  --encounters_dir temp/filtered_encounters \
+  --encounters_dir /wynton/protected/home/zack/brtan/Stage_2_Staging_Extractor/data/output/filtered_encounters \
   --note_meta_dir /wynton/protected/project/ic/data/parquet/DEID_CDW/note_metadata \
   --note_text_dir /wynton/protected/project/ic/data/parquet/DEID_CDW/note_text \
   --output_dir /scratch/brtan/filtered_notes
