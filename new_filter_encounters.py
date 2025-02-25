@@ -1,14 +1,13 @@
 # Pseudo Code
 
+# Fix Patient IDs, currently it's person_ids, I need patientdurablekey
 # 1. Start with list of patient ids /wynton/protected/home/zack/brtan/Stage_2_Staging_Extractor/data/input/patient_ids.csv 
 # 2. Match by patientdurablekey
 # 3. Get all encounters from the database /wynton/protected/project/ic/data/parquet/DEID_CDW/encounterfact, columns_to_keep = ['patientdurablekey', 'encounterkey', 'datekey', 'datekeyvalue', 'enddatekey', 'enddatekeyvalue', 'admissiondatekey', 'admissiondatekeyvalue', 'dischargedatekey', 'dischargedatekeyvalue']
 # 4. Save the filtered encounterskeys to a new table
 
 
-
 #!/usr/bin/env python3
-
 import pandas as pd
 from pathlib import Path
 import pyarrow.parquet as pq
@@ -37,6 +36,7 @@ def filter_encounters(patient_ids_path: str, input_dir: str, output_dir: str):
     # Define columns to keep
     columns_to_keep = [
         'patientdurablekey', 
+        'patientkey',
         'encounterkey',
         'datekey',
         'datekeyvalue',
@@ -68,8 +68,8 @@ def filter_encounters(patient_ids_path: str, input_dir: str, output_dir: str):
     query = f"""
     SELECT e.{', e.'.join(columns_to_keep)}
     FROM read_parquet('{input_path}/**/*.parquet') AS e
-    JOIN (SELECT patient_id AS patientdurablekey FROM read_csv('{patient_ids_path}')) AS p
-    ON e.patientdurablekey = p.patientdurablekey
+    JOIN (SELECT patient_id AS patientkey FROM read_csv('{patient_ids_path}')) AS p
+    ON e.patientkey = p.patientkey
     """
     
     filtered_df = con.execute(query).df()
@@ -77,8 +77,6 @@ def filter_encounters(patient_ids_path: str, input_dir: str, output_dir: str):
     
     # Close DuckDB connection
     con.close()
-
-
 
 
 

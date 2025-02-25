@@ -2,6 +2,10 @@
 
 A memory-efficient system for processing large-scale clinical data while extracting cancer staging timelines.
 
+
+Step 1: patient_id_mapping.py
+
+
 ## Architecture
 
 ```mermaid
