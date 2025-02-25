@@ -54,6 +54,7 @@ def load_filtered_metadata():
     
     combined_metadata = pd.concat(metadata_dfs, ignore_index=True)
     logger.info(f"Combined metadata shape: {combined_metadata.shape}")
+    print(f"Loaded and combined {len(metadata_files)} metadata files with {len(combined_metadata)} total records")
     
     return combined_metadata
 
@@ -68,10 +69,10 @@ def extract_note_keys(metadata_df):
         list: List of unique note keys
     """
     note_keys = metadata_df['deid_note_key'].dropna().unique().tolist()
-    logger.info(f"Extracted {len(note_keys)} unique note keys")
+    print(f"Extracted {len(note_keys)} unique note keys to process")
     return note_keys
 
-def process_note_text_in_batches(note_keys, metadata_df, batch_size=10):
+def process_note_text_in_batches(note_keys, metadata_df, batch_size=3):
     """
     Process note text files in batches, filtering by the extracted note keys.
     
@@ -88,7 +89,7 @@ def process_note_text_in_batches(note_keys, metadata_df, batch_size=10):
     
     # Get all note text parquet files
     note_text_files = glob.glob(os.path.join(NOTE_TEXT_DIR, "*.snappy.parquet"))
-    logger.info(f"Found {len(note_text_files)} note text files to process")
+    print(f"Found {len(note_text_files)} note text files to process in batches of {batch_size}")
     
     # Process in batches to manage memory
     ensure_dir_exists(OUTPUT_DIR)
@@ -102,17 +103,17 @@ def process_note_text_in_batches(note_keys, metadata_df, batch_size=10):
         batch_files = note_text_files[i:i+batch_size]
         batch_num += 1
         
-        logger.info(f"Processing batch {batch_num}, files {i+1}-{i+len(batch_files)} of {len(note_text_files)}")
+        print(f"Processing batch {batch_num}/{(len(note_text_files) + batch_size - 1) // batch_size}, files {i+1}-{i+len(batch_files)} of {len(note_text_files)}")
         
         try:
             # Skip if we've found all note keys
             if len(note_keys_set - found_keys) == 0:
-                logger.info("All note keys found. Stopping batch processing.")
+                print("All note keys found. Stopping batch processing.")
                 break
                 
             # Use dask to efficiently load and filter a batch of parquet files
             current_keys = list(note_keys_set - found_keys)
-            note_text_batch = dd.read_parquet(batch_files).set_index('deid_note_key').compute()
+            note_text_batch = dd.read_parquet(batch_files)
             
             # Filter to only rows with keys we need
             filtered_notes = note_text_batch[note_text_batch['deid_note_key'].isin(current_keys)]
@@ -127,8 +128,8 @@ def process_note_text_in_batches(note_keys, metadata_df, batch_size=10):
             # Update found keys
             batch_found_keys = set(batch_df['deid_note_key'].unique())
             found_keys.update(batch_found_keys)
-            logger.info(f"Found {len(batch_found_keys)} new note keys in batch {batch_num}. "
-                        f"Total found so far: {len(found_keys)}/{len(note_keys_set)} ({len(found_keys)/len(note_keys_set)*100:.2f}%)")
+            print(f"Found {len(batch_found_keys)} new note keys in batch {batch_num}. "
+                  f"Progress: {len(found_keys)}/{len(note_keys_set)} ({len(found_keys)/len(note_keys_set)*100:.2f}%)")
             
             # Merge with metadata
             batch_result = pd.merge(
@@ -150,12 +151,13 @@ def process_note_text_in_batches(note_keys, metadata_df, batch_size=10):
         except Exception as e:
             logger.error(f"Error processing batch {batch_num}: {e}", exc_info=True)
     
-    logger.info(f"Completed processing. Found {len(found_keys)}/{len(note_keys_set)} note keys "
-                f"({len(found_keys)/len(note_keys_set)*100:.2f}%)")
+    print(f"Completed note text extraction. Found {len(found_keys)}/{len(note_keys_set)} note keys "
+          f"({len(found_keys)/len(note_keys_set)*100:.2f}%)")
 
 def main():
     """Main function to run the note text extraction pipeline."""
     logger.info("Starting note text extraction pipeline")
+    print("Starting note text extraction pipeline")
     
     # Step 1: Load filtered metadata
     metadata_df = load_filtered_metadata()
@@ -166,7 +168,7 @@ def main():
     # Step 3: Process note text in batches and save directly
     process_note_text_in_batches(note_keys, metadata_df)
     
-    logger.info("Pipeline completed successfully")
+    print("Note text extraction pipeline completed successfully")
 
 if __name__ == "__main__":
     main()
