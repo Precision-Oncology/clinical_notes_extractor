@@ -14,14 +14,14 @@ def filter_encounters(patient_ids_path: str, input_dir: str, output_dir: str):
     Uses DuckDB for efficient filtering and PyArrow for creating partitioned output.
     
     Parameters:
-      patient_ids_path (str): Path to the CSV file containing patient IDs under the column 'patient_id'.
+      patient_ids_path (str): Path to the CSV file containing patient IDs under the column 'patientdurablekey'.
       input_dir (str): Directory containing input encounter Parquet files.
       output_dir (str): Directory where the filtered encounter records will be saved.
     """
     
     print(f"Loading patient IDs from {patient_ids_path}")
     # Read the CSV and extract the patient IDs
-    patient_ids = pd.read_csv(patient_ids_path)['patient_id'].tolist()
+    patient_ids = pd.read_csv(patient_ids_path)['patientdurablekey'].tolist()
     print(f"Loaded {len(patient_ids)} unique patient IDs")
     # print(f"Sample patient IDs from CSV: {patient_ids[:3]}")
     
@@ -47,32 +47,45 @@ def filter_encounters(patient_ids_path: str, input_dir: str, output_dir: str):
     print("Connecting to DuckDB...")
     con = duckdb.connect()
     
-    # Query to filter records
-    print("Filtering encounters by exact patient ID match...")
-    # Convert each patient ID to a quoted string for SQL compatibility
-    # This is necessary because patientdurablekey is likely stored as a string in the database
-    quoted_ids = [f"'{pid}'" for pid in patient_ids]
-    # Join all quoted IDs with commas to create a valid SQL IN clause
-    id_list_str = ",".join(quoted_ids)
+    # Query to filter records in batches of 500 IDs at a time
+    print("Filtering encounters by exact patient ID match (in batches of 500)...")
     
-    # Construct SQL query to filter encounter records:
-    # 1. Select only the columns we need to keep (defined earlier)
-    # 2. Read from all Parquet files in the input directory (using glob pattern)
-    # 3. Filter where patientdurablekey matches any of our target patient IDs
-    query = f"""
-    SELECT {', '.join(columns_to_keep)}
-    FROM read_parquet('{input_path}/**/*.parquet')
-    WHERE patientdurablekey IN ({id_list_str})
-    """
-    # Note: This approach loads the list of IDs directly into the query
-    # For very large patient lists, this could cause performance issues
-    # or exceed query size limits
-    filtered_df = con.execute(query).df()
-    print(f"Found {len(filtered_df)} exact matching encounter records")
+    # Convert each patient ID to a quoted string for SQL compatibility
+    quoted_ids = [f"'{pid}'" for pid in patient_ids]
+    
+    # Process in batches of 500 IDs
+    batch_size = 500
+    all_results = []
+    
+    for i in range(0, len(quoted_ids), batch_size):
+        batch = quoted_ids[i:i+batch_size]
+        id_list_str = ",".join(batch)
+        
+        print(f"Processing batch {i//batch_size + 1}/{(len(quoted_ids) + batch_size - 1)//batch_size} ({len(batch)} IDs)")
+        
+        # Construct SQL query for this batch
+        query = f"""
+        SELECT {', '.join(columns_to_keep)}
+        FROM read_parquet('{input_path}/**/*.parquet')
+        WHERE patientdurablekey IN ({id_list_str})
+        """
+        
+        batch_results = con.execute(query).df()
+        print(f"  Found {len(batch_results)} matching records in this batch")
+        
+        if not batch_results.empty:
+            all_results.append(batch_results)
+    
+    # Combine all batch results
+    if all_results:
+        filtered_df = pd.concat(all_results, ignore_index=True)
+        print(f"Total: Found {len(filtered_df)} exact matching encounter records across all batches") # Found 2232104 exact matching encounter records across all batches
+    else:
+        filtered_df = pd.DataFrame(columns=columns_to_keep)
+        print("No matching records found in any batch")
     
     # Close DuckDB connection
     con.close()
-    
     if len(filtered_df) == 0:
         print("No matching records found after all attempts. Exiting.")
         return
@@ -93,12 +106,11 @@ def filter_encounters(patient_ids_path: str, input_dir: str, output_dir: str):
     patient_ids_col = filtered_table['patientdurablekey'].to_pandas()
     partition_keys = [partition_map.get(pid, "unknown") for pid in patient_ids_col]
     
-    # Add partition column to the table
-    tables = [filtered_table]
-    tables.append(pa.Table.from_arrays([pa.array(partition_keys)], names=['partition_key']))
+    # Add partition column to the filtered dataframe instead of creating a separate table
+    filtered_df['partition_key'] = partition_keys
     
-    # Combine tables
-    final_table = pa.concat_tables(tables)
+    # Convert the updated dataframe with partition column to PyArrow table
+    final_table = pa.Table.from_pandas(filtered_df)
     
     # Write partitioned dataset
     print(f"Writing {len(filtered_df)} filtered encounters to {output_path}...")
@@ -120,4 +132,4 @@ if __name__ == "__main__":
     filter_encounters(args.patient_ids, args.input_dir, args.output_dir)
 
 # To run as an individual script:
-# python filter_encounters.py --patient_ids data/input/patient_ids.csv --input_dir /wynton/protected/project/ic/data/parquet/DEID_CDW/encounterfact --output_dir /scratch/brtan/filtered_encounters
+# python filter_encounters.py --patient_ids data/input/patient_ids_with_durablekey.csv --input_dir /wynton/protected/project/ic/data/parquet/DEID_CDW/encounterfact --output_dir /wynton/protected/home/zack/brtan/Stage_2_Staging_Extractor/data/output
