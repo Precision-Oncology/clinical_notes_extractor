@@ -5,14 +5,18 @@ python filter_encounters.py \
   --input_dir /wynton/protected/project/ic/data/parquet/DEID_CDW/encounterfact \
   --output_dir /wynton/protected/home/zack/brtan/Stage_2_Staging_Extractor/data/output/filtered_encounters
 
-# Step 2: Filter notes
-python filter_notes.py \
+# Step 2: Filter note metadata
+python filter_notemetadata.py \
   --encounters_dir /wynton/protected/home/zack/brtan/Stage_2_Staging_Extractor/data/output/filtered_encounters \
   --note_meta_dir /wynton/protected/project/ic/data/parquet/DEID_CDW/note_metadata \
-  --note_text_dir /wynton/protected/project/ic/data/parquet/DEID_CDW/note_text \
-  --output_dir /scratch/brtan/filtered_notes
+  --output_dir /wynton/protected/home/zack/brtan/Stage_2_Staging_Extractor/data/output/filtered_metadata
 
-# Step 3: Extract staging
+# Step 3: Filter note text
+python filter_notetext.py
+
+
+
+# Step 4: Extract staging
 python extract_staging.py \
   --input_dir /scratch/brtan/filtered_notes \
   --output_path data/output/staging_results.parquet \
