@@ -2,10 +2,8 @@
 """
 Staging Information Extractor
 
-
 # TODO: I don't want to be making 20,000 calls.... for each note text. So i either concatenate the note texts for each patient together, or I use a batch process, or I pre-filter the note texts.
 - Or both, pre-filter the note texts then batch process by patient!
-- Use local model found at /wynton/protected/home/zack/brtan/models/Llama-3.1-8B instead of remote model 
 
 This script processes clinical notes to extract cancer staging information using 
 a Language Model (LLM) approach. It processes parquet files containing clinical notes,
