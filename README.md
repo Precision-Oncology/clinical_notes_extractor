@@ -3,7 +3,8 @@
 A memory-efficient system for processing large-scale clinical data while extracting cancer staging timelines.
 
 
-Flow: patient_id_mapping.py (map person_source_value to patientdurablekey) --> filter_notes.py (get note metadata) --> filter_notetext.py (get note text) --> extract_staging.py (extract staging)
+Flow: patient_id_mapping.py (map person_source_value to patientdurablekey) --> filter_notes.py (get note metadata) --> filter_notetext.py (get note text) 
+--> extract_staging.py (extract staging)
 
 ## Architecture
 
