@@ -10,12 +10,21 @@ a Language Model (LLM) approach. It processes parquet files containing clinical 
 extracts staging information using the local Llama-3.1-8B model, and outputs
 a filtered dataset containing only notes with staging information.
 
+The script now supports patient-based batching, where all notes for a single patient
+are concatenated and processed together, which can significantly reduce the number
+of LLM calls needed. The script automatically checks if the concatenated text fits
+within the model's context window, and falls back to processing notes individually
+if it doesn't.
+
 Usage:
     # First activate the virtual environment:
     source /wynton/protected/home/zack/brtan/Virtual_Environments/dask_distribution_env/bin/activate
     
-    # Then run the script:
+    # Then run the script with patient-based batching (default):
     python new_extract_staging.py <batch_number>
+    
+    # To disable patient-based batching and process each note individually:
+    python new_extract_staging.py <batch_number> --no-patient-batching
     
     # For testing the parsing logic:
     python new_extract_staging.py --test
@@ -62,7 +71,24 @@ class StagingExtractor:
         self.tokenizer = None
         # Path to local model
         self.model_path = "/wynton/protected/home/zack/brtan/models/Llama-3.1-8B"
+        # Approximate token count for context window estimation
+        self.max_context_length = 8192  # Llama-3.1-8B context window
+        self.avg_chars_per_token = 3.5  # Approximate for English text
         
+    def _estimate_token_count(self, text: str) -> int:
+        """
+        Estimate the number of tokens in a text without loading the tokenizer.
+        This is a fast approximation to check if we should even attempt to load the model.
+        
+        Args:
+            text: The text to estimate token count for
+            
+        Returns:
+            Estimated token count
+        """
+        # Simple character-based estimation
+        return int(len(text) / self.avg_chars_per_token)
+    
     def _load_llm(self):
         """Lazy-load LLM model from local path."""
         if not self.llm_model:
@@ -72,6 +98,7 @@ class StagingExtractor:
                 try:
                     from transformers import AutoTokenizer, AutoModelForCausalLM
                     import torch
+                    import accelerate
                 except ImportError:
                     logger.error("Failed to import transformers or torch. Make sure you've activated the correct environment:")
                     logger.error("source /wynton/protected/home/zack/brtan/Virtual_Environments/dask_distribution_env/bin/activate")
@@ -178,6 +205,151 @@ Respond with EXACTLY ONE of these formats (no additional text):
             logger.error(f"Text snippet: {text[:100]}...")
             return {"stage": None, "system": None}
     
+    def check_context_length(self, text: str) -> bool:
+        """
+        Check if the text fits within the model's context window.
+        
+        Args:
+            text: The text to check
+            
+        Returns:
+            True if the text fits, False otherwise
+        """
+        # Load model if not already loaded
+        self._load_llm()
+        
+        # Construct the full prompt as we would in _llm_extract
+        prompt = f"""<|system|>
+You are a medical assistant that extracts cancer staging information from clinical notes.
+<|user|>
+Analyze this clinical note and extract cancer staging information:
+
+{text}
+
+Respond with EXACTLY ONE of these formats (no additional text):
+1. "NA" if no staging information exists
+2. "Stage: [stage]" for general staging (e.g., "Stage: IIB") 
+3. "TNM: [classification]" for TNM classifications (e.g., "TNM: T2N1M0")
+<|assistant|>"""
+        
+        # Check if the tokenized prompt length exceeds the model's context window
+        tokens = self.tokenizer(prompt, return_tensors="pt")
+        token_length = tokens.input_ids.shape[1]
+        max_length = self.tokenizer.model_max_length
+        
+        # Allow some buffer for the response
+        fits_context = token_length < (max_length - 100)
+        
+        if not fits_context:
+            logger.warning(f"Text exceeds context window: {token_length} tokens (max: {max_length - 100})")
+        
+        return fits_context
+    
+    def process_patient_batch(self, patient_notes: pd.DataFrame) -> pd.DataFrame:
+        """
+        Process all notes for a single patient as a batch.
+        
+        Args:
+            patient_notes: DataFrame containing notes for a single patient
+            
+        Returns:
+            DataFrame with only rows containing staging information
+        """
+        if patient_notes.empty:
+            return pd.DataFrame()
+        
+        # Extract patient ID for logging
+        patient_id = patient_notes.iloc[0].get('patient_id', 'unknown')
+        
+        # Concatenate all notes for this patient with separators
+        all_notes = []
+        for idx, row in patient_notes.iterrows():
+            text = row.get('note_text', '')
+            if isinstance(text, str) and text.strip():
+                # Add a separator between notes
+                all_notes.append(f"--- NOTE {idx} ---\n{text}")
+        
+        if not all_notes:
+            return pd.DataFrame()
+        
+        # Join all notes with double line breaks
+        concatenated_text = "\n\n".join(all_notes)
+        
+        # First do a quick estimation of token count before loading the model
+        estimated_tokens = self._estimate_token_count(concatenated_text)
+        estimated_prompt_tokens = estimated_tokens + 200  # Add buffer for prompt template
+        
+        # Check if we're likely to exceed context window
+        if estimated_prompt_tokens > (self.max_context_length - 100):
+            logger.warning(f"Estimated tokens for patient {patient_id}: {estimated_prompt_tokens}, which likely exceeds context window. Processing individually.")
+            return self._process_individual_notes(patient_notes)
+        
+        # If we're here, it's worth loading the model to do a precise check
+        # Check if the concatenated text fits within the model's context window
+        if not self.check_context_length(concatenated_text):
+            logger.warning(f"Concatenated notes for patient {patient_id} exceed context window. Processing individually.")
+            # Fall back to processing notes individually
+            return self._process_individual_notes(patient_notes)
+        
+        # Process the concatenated notes
+        logger.info(f"Processing {len(patient_notes)} notes for patient {patient_id} as a batch")
+        staging_info = self._llm_extract(concatenated_text)
+        
+        # If staging information was found, apply it to all notes in the batch
+        if staging_info.get('stage') is not None:
+            # Create a copy of the patient notes with staging information
+            result_df = patient_notes.copy()
+            result_df['stage'] = staging_info.get('stage')
+            result_df['system'] = staging_info.get('system')
+            logger.info(f"Found staging information for patient {patient_id}: {staging_info}")
+            return result_df
+        else:
+            logger.info(f"No staging information found for patient {patient_id}")
+            return pd.DataFrame()
+    
+    def _process_individual_notes(self, notes_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Process notes individually when batching fails.
+        
+        Args:
+            notes_df: DataFrame containing notes
+            
+        Returns:
+            DataFrame with only rows containing staging information
+        """
+        # Create empty columns for staging info if they don't exist
+        if 'stage' not in notes_df.columns:
+            notes_df['stage'] = None
+        if 'system' not in notes_df.columns:
+            notes_df['system'] = None
+        
+        # Track rows with staging info
+        has_staging = []
+        
+        # Process each note
+        for idx, row in tqdm(notes_df.iterrows(), total=len(notes_df), desc="Processing individual notes"):
+            text = row.get('note_text', '')
+            if not isinstance(text, str) or not text.strip():
+                continue
+                
+            # Extract staging information
+            staging_info = self._llm_extract(text)
+            
+            # Store results in the dataframe
+            notes_df.at[idx, 'stage'] = staging_info.get('stage')
+            notes_df.at[idx, 'system'] = staging_info.get('system')
+            
+            # Track if this note has staging info
+            has_staging.append(idx if staging_info.get('stage') is not None else None)
+        
+        # Filter to only rows with staging information
+        has_staging = [i for i in has_staging if i is not None]
+        if has_staging:
+            result_df = notes_df.loc[has_staging].copy()
+            return result_df
+        else:
+            return pd.DataFrame()
+    
     def _parse_llm_response(self, response: str) -> Dict[str, Optional[str]]:
         """
         Parse the LLM response to extract structured staging information.
@@ -231,6 +403,7 @@ Respond with EXACTLY ONE of these formats (no additional text):
 def process_file(file_path: str, extractor: StagingExtractor) -> pd.DataFrame:
     """
     Process a single parquet file to extract staging information.
+    Groups notes by patient and processes each patient's notes as a batch.
     
     Args:
         file_path: Path to the parquet file
@@ -245,34 +418,58 @@ def process_file(file_path: str, extractor: StagingExtractor) -> pd.DataFrame:
         
         logger.info(f"Processing {len(df)} notes...")
         
-        # Create empty columns for staging info
-        df['stage'] = None
-        df['system'] = None
-        
-        # Track rows with staging info
-        has_staging = []
-        
-        # Process each note
-        for idx, row in tqdm(df.iterrows(), total=len(df), desc="Extracting staging info"):
-            text = row['note_text']
-            if not isinstance(text, str) or not text.strip():
-                continue
+        # Check if patient_id column exists
+        if 'patient_id' not in df.columns:
+            logger.warning("No patient_id column found. Processing notes individually.")
+            # Create empty columns for staging info
+            df['stage'] = None
+            df['system'] = None
+            
+            # Track rows with staging info
+            has_staging = []
+            
+            # Process each note
+            for idx, row in tqdm(df.iterrows(), total=len(df), desc="Extracting staging info"):
+                text = row['note_text']
+                if not isinstance(text, str) or not text.strip():
+                    continue
+                    
+                # Extract staging information
+                staging_info = extractor._llm_extract(text)
                 
-            # Extract staging information
-            staging_info = extractor._llm_extract(text)
+                # Store results in the dataframe
+                df.at[idx, 'stage'] = staging_info.get('stage')
+                df.at[idx, 'system'] = staging_info.get('system')
+                
+                # Track if this note has staging info
+                has_staging.append(idx if staging_info.get('stage') is not None else None)
             
-            # Store results in the dataframe
-            df.at[idx, 'stage'] = staging_info.get('stage')
-            df.at[idx, 'system'] = staging_info.get('system')
-            
-            # Track if this note has staging info
-            has_staging.append(idx if staging_info.get('stage') is not None else None)
+            # Filter to only rows with staging information
+            has_staging = [i for i in has_staging if i is not None]
+            if has_staging:
+                result_df = df.loc[has_staging].copy()
+                logger.info(f"Found {len(result_df)} notes with staging information")
+                return result_df
+            else:
+                logger.info("No staging information found in this file")
+                return pd.DataFrame()
         
-        # Filter to only rows with staging information
-        has_staging = [i for i in has_staging if i is not None]
-        if has_staging:
-            result_df = df.loc[has_staging].copy()
-            logger.info(f"Found {len(result_df)} notes with staging information")
+        # Group notes by patient_id
+        patient_groups = df.groupby('patient_id')
+        logger.info(f"Found {len(patient_groups)} unique patients")
+        
+        # Process each patient's notes as a batch
+        all_results = []
+        for patient_id, patient_df in tqdm(patient_groups, desc="Processing patients"):
+            # Process this patient's notes as a batch
+            patient_results = extractor.process_patient_batch(patient_df)
+            if not patient_results.empty:
+                all_results.append(patient_results)
+        
+        # Combine all results
+        if all_results:
+            result_df = pd.concat(all_results, ignore_index=True)
+            logger.info(f"Found {len(result_df)} notes with staging information across {len(all_results)} patients")
             return result_df
         else:
             logger.info("No staging information found in this file")
@@ -454,7 +651,21 @@ def main():
     # Configure argument parser
     parser = argparse.ArgumentParser(description='Process a single batch of clinical notes')
     parser.add_argument('batch_number', type=int, help='Batch number to process')
+    parser.add_argument('--no-patient-batching', action='store_true', 
+                        help='Disable patient-based batching and process each note individually')
+    parser.add_argument('--test', action='store_true', help='Run test of parsing logic')
+    parser.add_argument('--benchmark', action='store_true', help='Run benchmark of parsing performance')
     args = parser.parse_args()
+    
+    # Handle test and benchmark modes
+    if args.test:
+        test_parsing_logic()
+        if args.benchmark:
+            benchmark_parsing()
+        return
+    elif args.benchmark:
+        benchmark_parsing()
+        return
     
     # Configure paths
     input_file = f"/wynton/protected/home/zack/brtan/Stage_2_Staging_Extractor/data/output/filtered_notes/final/filtered_notes_batch_{args.batch_number}.parquet"
@@ -466,6 +677,7 @@ def main():
     logger.info(f"Starting staging extraction pipeline")
     logger.info(f"Input file: {input_file}")
     logger.info(f"Output directory: {output_dir}")
+    logger.info(f"Patient-based batching: {'disabled' if args.no_patient_batching else 'enabled'}")
     
     # Check if input file exists
     if not os.path.exists(input_file):
@@ -476,7 +688,27 @@ def main():
     extractor = StagingExtractor()
     
     # Process the file
-    result_df = process_file(input_file, extractor)
+    if args.no_patient_batching:
+        # Force individual note processing by removing patient_id column if it exists
+        df = pd.read_parquet(input_file)
+        if 'patient_id' in df.columns:
+            df = df.drop(columns=['patient_id'])
+        
+        # Save to a temporary file
+        temp_file = input_file.replace('.parquet', '_temp.parquet')
+        df.to_parquet(temp_file)
+        
+        # Process the temporary file
+        result_df = process_file(temp_file, extractor)
+        
+        # Remove temporary file
+        try:
+            os.remove(temp_file)
+        except Exception as e:
+            logger.warning(f"Failed to remove temporary file {temp_file}: {e}")
+    else:
+        # Process with patient-based batching
+        result_df = process_file(input_file, extractor)
     
     if not result_df.empty:
         # Save results
@@ -493,18 +725,6 @@ def main():
         logger.info("No staging information found in the file")
 
 if __name__ == "__main__":
-    import sys
-    
-    # Check if we're running tests or benchmarks
-    if len(sys.argv) > 1 and sys.argv[1] == "--test":
-        test_parsing_logic()
-        if len(sys.argv) > 2 and sys.argv[2] == "--benchmark":
-            benchmark_parsing()
-        sys.exit(0)
-    elif len(sys.argv) > 1 and sys.argv[1] == "--benchmark":
-        benchmark_parsing()
-        sys.exit(0)
-    
     # Normal execution
     start_time = time.time()
     main()

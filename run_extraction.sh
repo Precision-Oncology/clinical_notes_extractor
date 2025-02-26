@@ -35,6 +35,21 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+# Check if accelerate package is installed, install if missing
+if ! python -c "import accelerate" &> /dev/null; then
+    echo "The 'accelerate' package is required but not installed. Installing now..."
+    pip install 'accelerate>=0.26.0'
+    
+    # Check if installation was successful
+    if ! python -c "import accelerate" &> /dev/null; then
+        echo "Error: Failed to install the 'accelerate' package."
+        echo "Please install it manually: pip install 'accelerate>=0.26.0'"
+        deactivate
+        exit 1
+    fi
+    echo "Successfully installed 'accelerate' package."
+fi
+
 # Verify model path exists
 MODEL_PATH="/wynton/protected/home/zack/brtan/models/Llama-3.1-8B"
 if [ ! -d "$MODEL_PATH" ]; then
