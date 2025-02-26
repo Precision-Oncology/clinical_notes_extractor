@@ -259,7 +259,7 @@ Respond with EXACTLY ONE of these formats (no additional text):
             return pd.DataFrame()
         
         # Extract patient ID for logging
-        patient_id = patient_notes.iloc[0].get('patient_id', 'unknown')
+        patientdurablekey = patient_notes.iloc[0].get('patientdurablekey', 'unknown')
         
         # Concatenate all notes for this patient with separators
         all_notes = []
@@ -281,18 +281,18 @@ Respond with EXACTLY ONE of these formats (no additional text):
         
         # Check if we're likely to exceed context window
         if estimated_prompt_tokens > (self.max_context_length - 100):
-            logger.warning(f"Estimated tokens for patient {patient_id}: {estimated_prompt_tokens}, which likely exceeds context window. Processing individually.")
+            logger.warning(f"Estimated tokens for patient {patientdurablekey}: {estimated_prompt_tokens}, which likely exceeds context window. Processing individually.")
             return self._process_individual_notes(patient_notes)
         
         # If we're here, it's worth loading the model to do a precise check
         # Check if the concatenated text fits within the model's context window
         if not self.check_context_length(concatenated_text):
-            logger.warning(f"Concatenated notes for patient {patient_id} exceed context window. Processing individually.")
+            logger.warning(f"Concatenated notes for patient {patientdurablekey} exceed context window. Processing individually.")
             # Fall back to processing notes individually
             return self._process_individual_notes(patient_notes)
         
         # Process the concatenated notes
-        logger.info(f"Processing {len(patient_notes)} notes for patient {patient_id} as a batch")
+        logger.info(f"Processing {len(patient_notes)} notes for patient {patientdurablekey} as a batch")
         staging_info = self._llm_extract(concatenated_text)
         
         # If staging information was found, apply it to all notes in the batch
@@ -301,10 +301,10 @@ Respond with EXACTLY ONE of these formats (no additional text):
             result_df = patient_notes.copy()
             result_df['stage'] = staging_info.get('stage')
             result_df['system'] = staging_info.get('system')
-            logger.info(f"Found staging information for patient {patient_id}: {staging_info}")
+            logger.info(f"Found staging information for patient {patientdurablekey}: {staging_info}")
             return result_df
         else:
-            logger.info(f"No staging information found for patient {patient_id}")
+            logger.info(f"No staging information found for patient {patientdurablekey}")
             return pd.DataFrame()
     
     def _process_individual_notes(self, notes_df: pd.DataFrame) -> pd.DataFrame:
@@ -418,9 +418,9 @@ def process_file(file_path: str, extractor: StagingExtractor) -> pd.DataFrame:
         
         logger.info(f"Processing {len(df)} notes...")
         
-        # Check if patient_id column exists
-        if 'patient_id' not in df.columns:
-            logger.warning("No patient_id column found. Processing notes individually.")
+        # Check if patientdurablekey column exists
+        if 'patientdurablekey' not in df.columns:
+            logger.warning("No patientdurablekey column found. Processing notes individually.")
             # Create empty columns for staging info
             df['stage'] = None
             df['system'] = None
@@ -454,13 +454,13 @@ def process_file(file_path: str, extractor: StagingExtractor) -> pd.DataFrame:
                 logger.info("No staging information found in this file")
                 return pd.DataFrame()
         
-        # Group notes by patient_id
-        patient_groups = df.groupby('patient_id')
+        # Group notes by patientdurablekey
+        patient_groups = df.groupby('patientdurablekey')
         logger.info(f"Found {len(patient_groups)} unique patients")
         
         # Process each patient's notes as a batch
         all_results = []
-        for patient_id, patient_df in tqdm(patient_groups, desc="Processing patients"):
+        for patientdurablekey, patient_df in tqdm(patient_groups, desc="Processing patients"):
             # Process this patient's notes as a batch
             patient_results = extractor.process_patient_batch(patient_df)
             if not patient_results.empty:
@@ -689,10 +689,10 @@ def main():
     
     # Process the file
     if args.no_patient_batching:
-        # Force individual note processing by removing patient_id column if it exists
+        # Force individual note processing by removing patientdurablekey column if it exists
         df = pd.read_parquet(input_file)
-        if 'patient_id' in df.columns:
-            df = df.drop(columns=['patient_id'])
+        if 'patientdurablekey' in df.columns:
+            df = df.drop(columns=['patientdurablekey'])
         
         # Save to a temporary file
         temp_file = input_file.replace('.parquet', '_temp.parquet')
