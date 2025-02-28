@@ -2,6 +2,8 @@
 
 A memory-efficient system for processing large-scale clinical data while extracting cancer staging timelines.
 
+**Note**: The actual code for the extraction of features from clinical notes has been moved to another repository. This repository can be used for sequential SQL query from patientdurablekeys to note_texts in the data environment.
+
 ## Pipeline Overview
 
 The pipeline consists of four main steps:
