@@ -10,7 +10,7 @@ The pipeline consists of four main steps:
 1. **Filter Encounters**: Extract relevant patient encounters
 2. **Filter Note Metadata**: Get note metadata for filtered encounters
 3. **Filter Note Text**: Extract note text for filtered metadata
-4. **Extract Staging**: Process notes to extract cancer staging information
+4. **Extract Staging**: Process notes to extract cancer staging information, Can use RegEx or LLM-based derived from Metaprompting Development.
 
 ## Architecture
 
@@ -134,6 +134,9 @@ pip install accelerate>=0.26.0
 # Run benchmark to measure parsing performance
 ./run_extraction.sh --benchmark
 ```
+
+To Do: You will want to filter by note_type first "Progress Notes, Imaging, Consults, Plan of Care, Lab, Interdisciplinary, H&P, Assessment & Plan Note, Pathology and Cytology, Discharge Summary, Operative Report, Significant Event" halving the notes
+
 
 **Parameters for `run_extraction.sh`:**
 - Batch number (integer): Process a specific batch of notes
